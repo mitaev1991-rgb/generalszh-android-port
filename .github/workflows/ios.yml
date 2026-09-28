@@ -1,0 +1,40 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja xcodegen
+
+      - name: Build
+        run: |
+          chmod +x scripts/build/ios/*.sh
+          ./scripts/build/ios/fetch-moltenvk.sh
+          ./scripts/build/ios/stage-fonts.sh
+          cmake --preset ios-vulkan
+          cmake --build build/ios-vulkan --target z_generals -j2
+
+      - name: Package app
+        run: |
+          ./scripts/build/ios/package-ios-zh.sh --dev
+
+      - name: Create IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/ios-package/GeneralsXZH.app Payload/
+          zip -r GeneralsXZH.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeneralsXZH-IPA
+          path: GeneralsXZH.ipa
