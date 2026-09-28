@@ -5,33 +5,89 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-latest
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'ffc071e0c08432c60c9b64f00334c0227667931b'
 
       - name: Install dependencies
         run: |
-          brew install cmake ninja xcodegen
+          brew update
+          brew install cmake ninja meson pkg-config
+          brew install autoconf autoconf-archive automake libtool
+          brew install ffmpeg freetype fontconfig glslang sdl3
+
+      - name: Install Vulkan SDK
+        run: |
+          VULKAN_ZIP="/tmp/vulkansdk-macos-1.4.341.1.zip"
+          VULKAN_URL="https://sdk.lunarg.com/sdk/download/1.4.341.1/mac/vulkansdk-macos-1.4.341.1.zip"
+
+          curl -L --retry 3 -o "$VULKAN_ZIP" "$VULKAN_URL"
+
+          mkdir -p /tmp/vulkan-extract
+          unzip -q "$VULKAN_ZIP" -d /tmp/vulkan-extract
+
+          VULKAN_EXECUTABLE=$(find /tmp/vulkan-extract -name "vulkansdk-macOS-*" -type f | head -1)
+          chmod +x "$VULKAN_EXECUTABLE"
+
+          "$VULKAN_EXECUTABLE" \
+            --root "$HOME/VulkanSDK/1.4.341.1" \
+            --accept-licenses \
+            --default-answer \
+            --confirm-command install
+
+          if [ -d "$HOME/VulkanSDK/1.4.341.1/macOS" ]; then
+            echo "VULKAN_SDK=$HOME/VulkanSDK/1.4.341.1/macOS" >> "$GITHUB_ENV"
+          else
+            echo "VULKAN_SDK=$HOME/VulkanSDK/1.4.341.1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fetch MoltenVK
+        run: |
+          chmod +x scripts/build/ios/fetch-moltenvk.sh
+          ./scripts/build/ios/fetch-moltenvk.sh
+
+      - name: Stage fonts
+        run: |
+          chmod +x scripts/build/ios/stage-fonts.sh
+          ./scripts/build/ios/stage-fonts.sh
+
+      - name: Configure CMake
+        env:
+          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+          VCPKG_DEFAULT_TRIPLET: arm64-ios
+          VULKAN_SDK: ${{ env.VULKAN_SDK }}
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake --preset ios-vulkan
 
       - name: Build
+        env:
+          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+          VULKAN_SDK: ${{ env.VULKAN_SDK }}
         run: |
-          chmod +x scripts/build/ios/*.sh
-          ./scripts/build/ios/fetch-moltenvk.sh
-          ./scripts/build/ios/stage-fonts.sh
-          cmake --preset ios-vulkan
           cmake --build build/ios-vulkan --target z_generals -j2
 
       - name: Package app
         run: |
+          chmod +x scripts/build/ios/package-ios-zh.sh
           ./scripts/build/ios/package-ios-zh.sh --dev
 
       - name: Create IPA
         run: |
           mkdir -p Payload
           cp -R build/ios-package/GeneralsXZH.app Payload/
-          zip -r GeneralsXZH.ipa Payload
+          zip -qry GeneralsXZH.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
